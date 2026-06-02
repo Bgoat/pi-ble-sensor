@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
-"""BLE peripheral exposing SHT40 temp/humidity and SPH0645 sound metrics.
+"""wingSpan: BLE peripheral exposing SHT40 temp/humidity, USB-mic bee
+acoustic analysis, and a placeholder hive weight.
 
 Run on a Raspberry Pi with:
-    sudo apt install python3-dbus python3-gi libportaudio2
+    sudo apt install python3-dbus python3-gi python3-numpy \
+                     python3-sounddevice libportaudio2
     pip install bluezero adafruit-circuitpython-sht4x adafruit-blinka \
-                sounddevice numpy
+                --break-system-packages
 
-For the SPH0645 you need an I2S overlay enabled, e.g. in
-/boot/firmware/config.txt:
-    dtparam=i2s=on
-    dtoverlay=googlevoicehat-soundcard
-then reboot. Confirm with `arecord -l` that the mic shows up as a card.
+Confirm the USB mic shows up with `arecord -l` and adjust AUDIO_DEVICE
+below if needed (substring match against the device name).
 """
 
 import json
@@ -26,60 +25,112 @@ from bluezero import adapter, async_tools, peripheral
 
 SERVICE_UUID = "e80b5ce0-1111-4000-8000-000000000001"
 DATA_UUID    = "e80b5ce0-1111-4000-8000-000000000002"
+CMD_UUID     = "e80b5ce0-1111-4000-8000-000000000003"
 
-SAMPLE_RATE = 16000
-BLOCK_SIZE  = SAMPLE_RATE  # 1s analysis windows
+CMD_ZERO_WEIGHT = 0x01
+
+AUDIO_DEVICE = "USB"
+SAMPLE_RATE  = 48000
+BLOCK_SIZE   = SAMPLE_RATE  # 1s analysis windows
+
+# Bee acoustic bands (Hz). "hum" is the 125 Hz resting baseline that you
+# subtract before judging the others — it otherwise swamps weaker signals.
+BANDS = {
+    "hum":     (100, 150),   # resting colony hum — baseline
+    "workers": (200, 270),   # flight, general activity, warble, waggle
+    "queen":   (320, 450),   # queen tooting (~400) and quacking (~350)
+    "swarm":   (400, 500),   # elevated energy here is a swarm marker
+}
+
+# Each band must be this many dB above the 125 Hz hum to count as active.
+EVENT_THRESHOLD_DB = {
+    "workers": 8.0,
+    "queen":   10.0,
+    "swarm":   8.0,
+}
+
+# Static placeholder until a real load cell is wired up.
+DEFAULT_WEIGHT_KG = 12.345
 
 i2c = busio.I2C(board.SCL, board.SDA)
 sht = adafruit_sht4x.SHT4x(i2c)
 
-sound_state = {"db": -120.0, "label": "silent"}
-sound_lock  = threading.Lock()
+audio_state = {
+    "db":     -120.0,
+    "bands":  {k: -120.0 for k in BANDS},
+    "events": [],
+}
+audio_lock = threading.Lock()
+
+weight_kg   = DEFAULT_WEIGHT_KG
+weight_lock = threading.Lock()
 
 
-def classify(db: float) -> str:
-    if db < -55: return "silent"
-    if db < -40: return "quiet"
-    if db < -25: return "speech"
-    if db < -10: return "loud"
-    return "very_loud"
+def analyze(samples_int16: np.ndarray):
+    x = samples_int16.astype(np.float32) / 32768.0
+    x -= x.mean()
+
+    rms = float(np.sqrt(np.mean(x ** 2)) + 1e-12)
+    db_overall = 20.0 * np.log10(rms)
+
+    win   = np.hanning(len(x)).astype(np.float32)
+    spec  = np.abs(np.fft.rfft(x * win)) ** 2
+    freqs = np.fft.rfftfreq(len(x), 1.0 / SAMPLE_RATE)
+
+    band_db = {}
+    for name, (lo, hi) in BANDS.items():
+        mask = (freqs >= lo) & (freqs < hi)
+        p = float(spec[mask].mean()) if mask.any() else 1e-20
+        band_db[name] = round(10.0 * np.log10(p + 1e-20), 1)
+
+    hum_db = band_db["hum"]
+    events = [
+        name for name, thresh in EVENT_THRESHOLD_DB.items()
+        if band_db[name] - hum_db > thresh
+    ]
+    return round(db_overall, 1), band_db, events
 
 
-def audio_callback(indata, frames, t, status):
-    # SPH0645 ships 24-bit samples in 32-bit I2S frames; treat as int32
-    # and normalise. Subtract mean to drop the mic's DC offset.
-    samples = indata[:, 0].astype(np.float32) / (2 ** 31)
-    samples -= samples.mean()
-    rms = float(np.sqrt(np.mean(samples ** 2)) + 1e-12)
-    db  = 20.0 * np.log10(rms)  # dBFS
-    with sound_lock:
-        sound_state["db"]    = round(db, 1)
-        sound_state["label"] = classify(db)
+def audio_worker():
+    stream = sd.InputStream(
+        device=AUDIO_DEVICE,
+        channels=1,
+        samplerate=SAMPLE_RATE,
+        dtype="int16",
+        blocksize=BLOCK_SIZE,
+    )
+    stream.start()
+    while True:
+        data, _ = stream.read(BLOCK_SIZE)
+        db, bands, events = analyze(data[:, 0])
+        with audio_lock:
+            audio_state["db"]     = db
+            audio_state["bands"]  = bands
+            audio_state["events"] = events
 
 
 def start_audio():
-    stream = sd.InputStream(
-        channels=1,
-        samplerate=SAMPLE_RATE,
-        dtype="int32",
-        blocksize=BLOCK_SIZE,
-        callback=audio_callback,
-    )
-    stream.start()
-    return stream
+    t = threading.Thread(target=audio_worker, daemon=True)
+    t.start()
+    return t
 
 
 def read_payload():
     temp_c, rh = sht.measurements
-    with sound_lock:
-        db    = sound_state["db"]
-        label = sound_state["label"]
+    with audio_lock:
+        db     = audio_state["db"]
+        bands  = dict(audio_state["bands"])
+        events = list(audio_state["events"])
+    with weight_lock:
+        w = weight_kg
     payload = {
-        "t":     round(temp_c, 2),
-        "h":     round(rh, 2),
-        "db":    db,
-        "label": label,
-        "ts":    int(time.time()),
+        "t":      round(temp_c, 2),
+        "h":      round(rh, 2),
+        "db":     db,
+        "bands":  bands,
+        "events": events,
+        "w":      round(w, 3),
+        "ts":     int(time.time()),
     }
     return list(json.dumps(payload).encode("utf-8"))
 
@@ -90,7 +141,7 @@ def on_read(options):
 
 def push_update(characteristic):
     characteristic.set_value(read_payload())
-    return characteristic.is_notifying  # keep timer alive while subscribed
+    return characteristic.is_notifying
 
 
 def on_notify(notifying, characteristic):
@@ -98,23 +149,34 @@ def on_notify(notifying, characteristic):
         async_tools.add_timer_seconds(1, push_update, characteristic)
 
 
+def on_cmd_write(value, options):
+    global weight_kg
+    if value and value[0] == CMD_ZERO_WEIGHT:
+        with weight_lock:
+            weight_kg = 0.0
+        print("[cmd] zero weight")
+
+
 def main():
     start_audio()
 
     adapter_addr = list(adapter.Adapter.available())[0].address
-    pi_sensor = peripheral.Peripheral(adapter_addr, local_name="PiSensor")
-    pi_sensor.add_service(srv_id=1, uuid=SERVICE_UUID, primary=True)
-    pi_sensor.add_characteristic(
-        srv_id=1,
-        chr_id=1,
-        uuid=DATA_UUID,
-        value=[],
-        notifying=False,
+    dev = peripheral.Peripheral(adapter_addr, local_name="wingSpan")
+    dev.add_service(srv_id=1, uuid=SERVICE_UUID, primary=True)
+    dev.add_characteristic(
+        srv_id=1, chr_id=1, uuid=DATA_UUID,
+        value=[], notifying=False,
         flags=["read", "notify"],
         read_callback=on_read,
         notify_callback=on_notify,
     )
-    pi_sensor.publish()
+    dev.add_characteristic(
+        srv_id=1, chr_id=2, uuid=CMD_UUID,
+        value=[], notifying=False,
+        flags=["write"],
+        write_callback=on_cmd_write,
+    )
+    dev.publish()
 
 
 if __name__ == "__main__":

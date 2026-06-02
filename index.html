@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Pi Sensor</title>
+<title>wingSpan</title>
 <style>
   :root { color-scheme: light dark; }
   body {
@@ -14,20 +14,18 @@
   }
   h1 { margin-top: 0; }
   button {
-    font-size: 1.1rem;
-    padding: 0.8rem 1.4rem;
+    font-size: 1rem;
+    padding: 0.6rem 1.2rem;
     border-radius: 10px;
     border: none;
     background: #2563eb;
     color: white;
     cursor: pointer;
   }
+  button.secondary { background: #64748b; }
   button:disabled { background: #94a3b8; cursor: not-allowed; }
-  #status {
-    margin-top: 0.8rem;
-    color: #64748b;
-    min-height: 1.3em;
-  }
+  .row { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; }
+  #status { margin-top: 0.8rem; color: #64748b; min-height: 1.3em; }
   .grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -41,24 +39,46 @@
   }
   .card .label {
     color: #64748b;
-    font-size: 0.8rem;
+    font-size: 0.78rem;
     text-transform: uppercase;
     letter-spacing: 0.04em;
   }
   .card .value {
-    font-size: 2rem;
+    font-size: 1.8rem;
     font-weight: 600;
     margin-top: 0.3rem;
     line-height: 1.1;
   }
   .card .unit { font-size: 1rem; color: #64748b; margin-left: 0.2rem; }
   .card.wide { grid-column: span 2; }
+  .events {
+    display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.4rem;
+  }
+  .event {
+    background: #f59e0b; color: white;
+    padding: 0.25rem 0.7rem; border-radius: 999px; font-size: 0.85rem;
+    font-weight: 500;
+  }
+  .event.workers { background: #2563eb; }
+  .event.queen   { background: #a855f7; }
+  .event.swarm   { background: #dc2626; }
+  .bands { margin-top: 0.6rem; }
+  .band {
+    display: flex; justify-content: space-between;
+    font-size: 0.85rem; color: #64748b;
+    padding: 0.15rem 0;
+  }
+  .band .name { text-transform: capitalize; }
+  .band .freq { color: #94a3b8; font-size: 0.78rem; margin-left: 0.4rem; }
   #ts { margin-top: 1rem; color: #94a3b8; font-size: 0.85rem; }
 </style>
 </head>
 <body>
-<h1>Pi Sensor</h1>
-<button id="connect">Connect</button>
+<h1>wingSpan</h1>
+<div class="row">
+  <button id="connect">Connect</button>
+  <button id="zero" class="secondary" disabled>Zero weight</button>
+</div>
 <div id="status">Disconnected</div>
 
 <div class="grid">
@@ -71,12 +91,17 @@
     <div class="value"><span id="h">—</span><span class="unit">%</span></div>
   </div>
   <div class="card">
+    <div class="label">Hive weight</div>
+    <div class="value"><span id="w">—</span><span class="unit">kg</span></div>
+  </div>
+  <div class="card">
     <div class="label">Sound level</div>
     <div class="value"><span id="db">—</span><span class="unit">dBFS</span></div>
   </div>
-  <div class="card">
-    <div class="label">Detected</div>
-    <div class="value" style="font-size:1.4rem"><span id="cls">—</span></div>
+  <div class="card wide">
+    <div class="label">Bee activity</div>
+    <div class="events" id="events"><span style="color:#94a3b8">—</span></div>
+    <div class="bands" id="bands"></div>
   </div>
 </div>
 <div id="ts"></div>
@@ -84,10 +109,26 @@
 <script>
 const SERVICE_UUID = "e80b5ce0-1111-4000-8000-000000000001";
 const DATA_UUID    = "e80b5ce0-1111-4000-8000-000000000002";
+const CMD_UUID     = "e80b5ce0-1111-4000-8000-000000000003";
+const CMD_ZERO_WEIGHT = 0x01;
+
+const EVENT_LABELS = {
+  workers: "Workers active (200–270 Hz)",
+  queen:   "Queen signal (320–450 Hz)",
+  swarm:   "Swarm marker (400–500 Hz)",
+};
+
+const BAND_FREQ = {
+  hum:     "100–150 Hz · resting baseline",
+  workers: "200–270 Hz · flight / waggle",
+  queen:   "320–450 Hz · toot / quack",
+  swarm:   "400–500 Hz · swarm energy",
+};
 
 const $ = (id) => document.getElementById(id);
 let device = null;
 let dataChar = null;
+let cmdChar  = null;
 
 async function pickAndConnect() {
   $("status").textContent = "Requesting device…";
@@ -103,10 +144,42 @@ async function connectGatt() {
   const server  = await device.gatt.connect();
   const service = await server.getPrimaryService(SERVICE_UUID);
   dataChar = await service.getCharacteristic(DATA_UUID);
+  cmdChar  = await service.getCharacteristic(CMD_UUID);
   await dataChar.startNotifications();
   dataChar.addEventListener("characteristicvaluechanged", onData);
   $("status").textContent = "Connected to " + (device.name || "device");
   $("connect").textContent = "Reconnect";
+  $("zero").disabled = false;
+}
+
+function renderEvents(events) {
+  const el = $("events");
+  el.innerHTML = "";
+  if (!events || events.length === 0) {
+    el.innerHTML = '<span style="color:#94a3b8">quiet</span>';
+    return;
+  }
+  for (const e of events) {
+    const tag = document.createElement("span");
+    tag.className = "event " + e;
+    tag.textContent = EVENT_LABELS[e] || e;
+    el.appendChild(tag);
+  }
+}
+
+function renderBands(bands) {
+  if (!bands) return;
+  const el = $("bands");
+  el.innerHTML = "";
+  for (const [name, db] of Object.entries(bands)) {
+    const row = document.createElement("div");
+    row.className = "band";
+    const left  = `<span><span class="name">${name}</span>` +
+                  `<span class="freq">${BAND_FREQ[name] || ""}</span></span>`;
+    const right = `<span>${db.toFixed(1)} dB</span>`;
+    row.innerHTML = left + right;
+    el.appendChild(row);
+  }
 }
 
 function onData(e) {
@@ -118,13 +191,16 @@ function onData(e) {
   if (typeof d.t === "number")  $("t").textContent  = d.t.toFixed(1);
   if (typeof d.h === "number")  $("h").textContent  = d.h.toFixed(1);
   if (typeof d.db === "number") $("db").textContent = d.db.toFixed(1);
-  if (d.label) $("cls").textContent = d.label;
+  if (typeof d.w === "number")  $("w").textContent  = d.w.toFixed(2);
+  renderEvents(d.events);
+  renderBands(d.bands);
   if (d.ts) $("ts").textContent =
     "Last update: " + new Date(d.ts * 1000).toLocaleTimeString();
 }
 
 function onDisconnect() {
   $("status").textContent = "Disconnected — tap Reconnect when in range";
+  $("zero").disabled = true;
 }
 
 $("connect").addEventListener("click", async () => {
@@ -136,6 +212,16 @@ $("connect").addEventListener("click", async () => {
     }
   } catch (err) {
     $("status").textContent = "Error: " + err.message;
+  }
+});
+
+$("zero").addEventListener("click", async () => {
+  if (!cmdChar) return;
+  try {
+    await cmdChar.writeValue(new Uint8Array([CMD_ZERO_WEIGHT]));
+    $("status").textContent = "Weight zeroed";
+  } catch (err) {
+    $("status").textContent = "Zero failed: " + err.message;
   }
 });
 
