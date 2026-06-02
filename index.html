@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Pi Sensor</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font-family: -apple-system, system-ui, "Segoe UI", sans-serif;
+    max-width: 480px;
+    margin: 1.5rem auto;
+    padding: 1rem;
+  }
+  h1 { margin-top: 0; }
+  button {
+    font-size: 1.1rem;
+    padding: 0.8rem 1.4rem;
+    border-radius: 10px;
+    border: none;
+    background: #2563eb;
+    color: white;
+    cursor: pointer;
+  }
+  button:disabled { background: #94a3b8; cursor: not-allowed; }
+  #status {
+    margin-top: 0.8rem;
+    color: #64748b;
+    min-height: 1.3em;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.8rem;
+    margin-top: 1.5rem;
+  }
+  .card {
+    background: rgba(127,127,127,0.12);
+    padding: 1rem;
+    border-radius: 10px;
+  }
+  .card .label {
+    color: #64748b;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .card .value {
+    font-size: 2rem;
+    font-weight: 600;
+    margin-top: 0.3rem;
+    line-height: 1.1;
+  }
+  .card .unit { font-size: 1rem; color: #64748b; margin-left: 0.2rem; }
+  .card.wide { grid-column: span 2; }
+  #ts { margin-top: 1rem; color: #94a3b8; font-size: 0.85rem; }
+</style>
+</head>
+<body>
+<h1>Pi Sensor</h1>
+<button id="connect">Connect</button>
+<div id="status">Disconnected</div>
+
+<div class="grid">
+  <div class="card">
+    <div class="label">Temperature</div>
+    <div class="value"><span id="t">—</span><span class="unit">°C</span></div>
+  </div>
+  <div class="card">
+    <div class="label">Humidity</div>
+    <div class="value"><span id="h">—</span><span class="unit">%</span></div>
+  </div>
+  <div class="card">
+    <div class="label">Sound level</div>
+    <div class="value"><span id="db">—</span><span class="unit">dBFS</span></div>
+  </div>
+  <div class="card">
+    <div class="label">Detected</div>
+    <div class="value" style="font-size:1.4rem"><span id="cls">—</span></div>
+  </div>
+</div>
+<div id="ts"></div>
+
+<script>
+const SERVICE_UUID = "e80b5ce0-1111-4000-8000-000000000001";
+const DATA_UUID    = "e80b5ce0-1111-4000-8000-000000000002";
+
+const $ = (id) => document.getElementById(id);
+let device = null;
+let dataChar = null;
+
+async function pickAndConnect() {
+  $("status").textContent = "Requesting device…";
+  device = await navigator.bluetooth.requestDevice({
+    filters: [{ services: [SERVICE_UUID] }],
+  });
+  device.addEventListener("gattserverdisconnected", onDisconnect);
+  await connectGatt();
+}
+
+async function connectGatt() {
+  $("status").textContent = "Connecting…";
+  const server  = await device.gatt.connect();
+  const service = await server.getPrimaryService(SERVICE_UUID);
+  dataChar = await service.getCharacteristic(DATA_UUID);
+  await dataChar.startNotifications();
+  dataChar.addEventListener("characteristicvaluechanged", onData);
+  $("status").textContent = "Connected to " + (device.name || "device");
+  $("connect").textContent = "Reconnect";
+}
+
+function onData(e) {
+  const text = new TextDecoder().decode(e.target.value);
+  let d;
+  try { d = JSON.parse(text); }
+  catch (err) { console.error("bad payload", text, err); return; }
+
+  if (typeof d.t === "number")  $("t").textContent  = d.t.toFixed(1);
+  if (typeof d.h === "number")  $("h").textContent  = d.h.toFixed(1);
+  if (typeof d.db === "number") $("db").textContent = d.db.toFixed(1);
+  if (d.label) $("cls").textContent = d.label;
+  if (d.ts) $("ts").textContent =
+    "Last update: " + new Date(d.ts * 1000).toLocaleTimeString();
+}
+
+function onDisconnect() {
+  $("status").textContent = "Disconnected — tap Reconnect when in range";
+}
+
+$("connect").addEventListener("click", async () => {
+  try {
+    if (device && !device.gatt.connected) {
+      await connectGatt();
+    } else {
+      await pickAndConnect();
+    }
+  } catch (err) {
+    $("status").textContent = "Error: " + err.message;
+  }
+});
+
+if (!navigator.bluetooth) {
+  $("status").textContent =
+    "Web Bluetooth not supported here — open in Chrome on Android.";
+  $("connect").disabled = true;
+}
+</script>
+</body>
+</html>
