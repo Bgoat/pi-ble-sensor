@@ -13,8 +13,11 @@ below if needed (substring match against the device name).
 """
 
 import json
+import os
 import threading
 import time
+import wave
+from datetime import datetime, timezone
 
 import adafruit_sht4x
 import board
@@ -23,15 +26,36 @@ import numpy as np
 import sounddevice as sd
 from bluezero import adapter, async_tools, peripheral
 
+import csv_writer
+
 SERVICE_UUID = "e80b5ce0-1111-4000-8000-000000000001"
 DATA_UUID    = "e80b5ce0-1111-4000-8000-000000000002"
 CMD_UUID     = "e80b5ce0-1111-4000-8000-000000000003"
 
 CMD_ZERO_WEIGHT = 0x01
 
-AUDIO_DEVICE = "USB"
-SAMPLE_RATE  = 48000
-BLOCK_SIZE   = SAMPLE_RATE  # 1s analysis windows
+MIC = "i2s"   # "usb" (LavMicro etc.) or "i2s" (SPH0645 via googlevoicehat overlay)
+
+if MIC == "usb":
+    AUDIO_DEVICE   = "USB"
+    AUDIO_CHANNELS = 1
+    AUDIO_DTYPE    = "int16"
+elif MIC == "i2s":
+    AUDIO_DEVICE   = "voicehat"  # matches "Google voiceHAT SoundCard HiFi voicehat-hifi-0"
+    AUDIO_CHANNELS = 2           # I2S hat exposes stereo; only left has real data with SEL→GND
+    AUDIO_DTYPE    = "int32"     # SPH0645 outputs 24-bit data left-justified in 32-bit slots
+else:
+    raise ValueError(f"unknown MIC: {MIC!r}")
+
+SAMPLE_RATE = 48000
+BLOCK_SIZE  = 5 * SAMPLE_RATE  # 5s analysis windows
+
+# Raw audio recording for offline frequency analysis. One 5s WAV every
+# 2 min is ~469 KB; ~330 MB/day. 3 GB cap → ~9 days rolling window.
+SAVE_WAV       = True
+AUDIO_DIR      = "/var/lib/wingspan/audio"
+WAV_INTERVAL_S = 120
+WAV_RETAIN_MB  = 3000
 
 # Bee acoustic bands (Hz). "hum" is the 125 Hz resting baseline that you
 # subtract before judging the others — it otherwise swamps weaker signals.
@@ -91,26 +115,124 @@ def analyze(samples_int16: np.ndarray):
     return round(db_overall, 1), band_db, events
 
 
+_last_wav_save = 0.0
+
+
+def save_wav(samples_int16: np.ndarray) -> None:
+    global _last_wav_save
+    now = time.time()
+    if now - _last_wav_save < WAV_INTERVAL_S:
+        return
+    _last_wav_save = now
+
+    dt      = datetime.now(timezone.utc)
+    day_dir = os.path.join(AUDIO_DIR, dt.strftime("%Y-%m-%d"))
+    path    = os.path.join(day_dir, dt.strftime("%H-%M-%SZ.wav"))
+    try:
+        os.makedirs(day_dir, exist_ok=True)
+        with wave.open(path, "wb") as f:
+            f.setnchannels(1)
+            f.setsampwidth(2)
+            f.setframerate(SAMPLE_RATE)
+            f.writeframes(samples_int16.tobytes())
+    except OSError as e:
+        print(f"[wav] write failed: {e}")
+        return
+    enforce_wav_cap()
+
+
+def enforce_wav_cap() -> None:
+    cap_bytes = WAV_RETAIN_MB * 1024 * 1024
+    files = []
+    for root, _, names in os.walk(AUDIO_DIR):
+        for n in names:
+            if not n.endswith(".wav"):
+                continue
+            p = os.path.join(root, n)
+            try:
+                st = os.stat(p)
+            except OSError:
+                continue
+            files.append((st.st_mtime, st.st_size, p))
+    total = sum(s for _, s, _ in files)
+    if total <= cap_bytes:
+        return
+    files.sort()
+    for _, size, p in files:
+        if total <= cap_bytes:
+            break
+        try:
+            os.remove(p)
+            total -= size
+        except OSError:
+            continue
+
+
 def audio_worker():
     stream = sd.InputStream(
         device=AUDIO_DEVICE,
-        channels=1,
+        channels=AUDIO_CHANNELS,
         samplerate=SAMPLE_RATE,
-        dtype="int16",
+        dtype=AUDIO_DTYPE,
         blocksize=BLOCK_SIZE,
     )
     stream.start()
     while True:
         data, _ = stream.read(BLOCK_SIZE)
-        db, bands, events = analyze(data[:, 0])
+        if AUDIO_DTYPE == "int32":
+            # SPH0645 has a large DC offset; strip it before the int16 cast
+            # so saved WAVs don't have a giant 0 Hz spike.
+            raw = data[:, 0].astype(np.int64)
+            raw -= int(raw.mean())
+            mono = (raw >> 16).astype(np.int16)
+        else:
+            mono = data[:, 0]
+        db, bands, events = analyze(mono)
         with audio_lock:
             audio_state["db"]     = db
             audio_state["bands"]  = bands
             audio_state["events"] = events
+        if SAVE_WAV:
+            save_wav(mono)
 
 
 def start_audio():
     t = threading.Thread(target=audio_worker, daemon=True)
+    t.start()
+    return t
+
+
+def csv_logger_worker():
+    while True:
+        time.sleep(60)
+        try:
+            temp_c, rh = sht.measurements
+            with audio_lock:
+                db     = audio_state["db"]
+                bands  = dict(audio_state["bands"])
+                events = list(audio_state["events"])
+            with weight_lock:
+                w = weight_kg
+            row = [
+                int(time.time()),
+                round(temp_c, 2),
+                round(rh, 2),
+                round(w, 3),
+                db,
+                "", "", "",   # bv, bp, chg — pending MAX17048 wire-up
+                bands["hum"],
+                bands["workers"],
+                bands["queen"],
+                bands["swarm"],
+                ",".join(events),
+            ]
+            csv_writer.append(row)
+        except Exception as e:
+            print(f"[csv] logger error: {e}")
+
+
+def start_csv_logger():
+    t = threading.Thread(target=csv_logger_worker, daemon=True)
     t.start()
     return t
 
@@ -159,6 +281,7 @@ def on_cmd_write(value, options):
 
 def main():
     start_audio()
+    start_csv_logger()
 
     adapter_addr = list(adapter.Adapter.available())[0].address
     dev = peripheral.Peripheral(adapter_addr, local_name="wingSpan")
