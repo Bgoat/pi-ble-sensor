@@ -41,13 +41,14 @@ echo
 echo "[1/12] System packages"
 sudo apt-get update -qq
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-    python3-dbus python3-gi python3-numpy python3-sounddevice \
+    python3-dbus python3-gi python3-numpy python3-pip \
     libportaudio2 git i2c-tools curl >/dev/null
 
 # ---- 2. Python packages ----
+# sounddevice was dropped from Debian Trixie's apt repos — install via pip.
 echo "[2/12] Python packages"
 pip3 install --break-system-packages --quiet \
-    bluezero adafruit-circuitpython-sht4x adafruit-blinka
+    sounddevice bluezero adafruit-circuitpython-sht4x adafruit-blinka
 
 # ---- 3. Enable I2C + I2S in /boot/firmware/config.txt ----
 echo "[3/12] Firmware config (I2C, I2S, googlevoicehat overlay)"
