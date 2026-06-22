@@ -126,7 +126,7 @@ The Pi holds **~9 days** of audio before the oldest files get auto-deleted. **Pu
 
 ## Live readings via Bluetooth (optional)
 
-The Pi also advertises itself as a Bluetooth Low Energy peripheral named `wingSpan`. If you stand within ~10 m of the unit you can open a small web page in Chrome and see live temperature, humidity, sound level, and band activity updating about once a second. This is handy for sanity-checking the unit when you're physically near the hive — confirming the mic is hearing something, the temperature looks right, etc.
+The Pi also advertises itself as a Bluetooth Low Energy peripheral named `wingSpan-N`, where `N` is the unit number printed on the device (your shipment-specific README will tell you which number you have). If you stand within ~10 m of the unit you can open a small web page in Chrome and see live temperature, humidity, sound level, and band activity updating about once a second. This is handy for sanity-checking the unit when you're physically near the hive — confirming the mic is hearing something, the temperature looks right, etc.
 
 This is **optional**. All the data you need for analysis is in the WAV files and CSV log you pull over Tailscale. Use Bluetooth only if you want a live readout.
 
@@ -142,7 +142,7 @@ This is **optional**. All the data you need for analysis is in the WAV files and
 1. William will send you a file called `index.html`. Save it anywhere on your device.
 2. Open it in Chrome (double-click on macOS/Windows; on Android, save it to your Downloads folder and tap to open with Chrome).
 3. Click the **Connect** button.
-4. A browser pop-up will list nearby Bluetooth devices — pick **wingSpan**.
+4. A browser pop-up will list nearby Bluetooth devices — pick the one matching your unit's name (e.g. **wingSpan-1**).
 5. The page will start showing live readings updating each second.
 
 You can leave the page open as long as the device stays in range. If you walk out of range or disconnect, click **Reconnect** to resume.
