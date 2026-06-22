@@ -284,7 +284,7 @@ def main():
     start_csv_logger()
 
     adapter_addr = list(adapter.Adapter.available())[0].address
-    dev = peripheral.Peripheral(adapter_addr, local_name="wingSpan")
+    dev = peripheral.Peripheral(adapter_addr, local_name="wingSpan-1")
     dev.add_service(srv_id=1, uuid=SERVICE_UUID, primary=True)
     dev.add_characteristic(
         srv_id=1, chr_id=1, uuid=DATA_UUID,

@@ -8,6 +8,7 @@ User=beehaus
 Group=beehaus
 WorkingDirectory=/home/beehaus
 Environment=HOME=/home/beehaus
+ExecStartPre=+/home/beehaus/wingspan-boot.sh
 ExecStart=/usr/bin/python3 /home/beehaus/sensor_ble.py
 Restart=always
 RestartSec=5

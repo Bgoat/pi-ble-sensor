@@ -2,6 +2,8 @@
 
 Read this first to know what's in the package and how everything physically connects. For software setup (Tailscale, SSH/SCP, the BLE web app) see [README.md](README.md).
 
+**Your unit is `wingSpan-1`** — that's the device name it advertises over Bluetooth, and the hostname-shorthand William will use when referencing it.
+
 ---
 
 ## What's in the package

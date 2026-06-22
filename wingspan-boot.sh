@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Pre-start power killswitches for the wingSpan service.
+# Runs as root via ExecStartPre=+... in wingspan.service.
+
+set -u
+
+# Stop the ACT LED from blinking on disk activity, then force it off.
+if [ -e /sys/class/leds/ACT/trigger ]; then
+    echo none > /sys/class/leds/ACT/trigger 2>/dev/null || true
+    echo 0    > /sys/class/leds/ACT/brightness 2>/dev/null || true
+fi
+
+exit 0
