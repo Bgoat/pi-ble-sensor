@@ -1,0 +1,18 @@
+[Unit]
+Description=wingSpan BLE sensor
+After=network.target bluetooth.target sound.target
+
+[Service]
+Type=simple
+User=beehaus
+Group=beehaus
+WorkingDirectory=/home/beehaus
+Environment=HOME=/home/beehaus
+ExecStart=/usr/bin/python3 /home/beehaus/sensor_ble.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
