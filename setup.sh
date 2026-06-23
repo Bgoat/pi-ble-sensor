@@ -42,7 +42,7 @@ echo "[1/12] System packages"
 sudo apt-get update -qq
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
     python3-dbus python3-gi python3-numpy python3-pip \
-    libportaudio2 git i2c-tools curl >/dev/null
+    libportaudio2 git i2c-tools curl rfkill >/dev/null
 
 # ---- 2. Python packages ----
 # sounddevice was dropped from Debian Trixie's apt repos — install via pip.

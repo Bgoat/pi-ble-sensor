@@ -10,4 +10,10 @@ if [ -e /sys/class/leds/ACT/trigger ]; then
     echo 0    > /sys/class/leds/ACT/brightness 2>/dev/null || true
 fi
 
+# Trixie Lite ships with Bluetooth rfkill-soft-blocked. Unblock so the BLE
+# peripheral can power on its adapter.
+if command -v rfkill >/dev/null 2>&1; then
+    rfkill unblock bluetooth 2>/dev/null || true
+fi
+
 exit 0
