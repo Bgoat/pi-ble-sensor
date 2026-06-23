@@ -117,8 +117,14 @@ if ! nmcli -t -f NAME connection show | grep -qx wjm; then
 fi
 
 # ---- 10. Bluetooth controller alias (Chrome shows this, not the LocalName) ----
-echo "[10/12] Setting Bluetooth alias to ${BLE_NAME}"
+# Also disable the discoverable timeout so the BLE peripheral stays visible
+# to scanners. wingspan-boot.sh sets discoverable=on at each service start.
+echo "[10/12] Setting Bluetooth alias to ${BLE_NAME} and disabling discoverable timeout"
 sudo bluetoothctl -- system-alias "${BLE_NAME}" >/dev/null
+sudo sed -i 's/^#DiscoverableTimeout = .*/DiscoverableTimeout = 0/' /etc/bluetooth/main.conf
+if ! grep -q "^DiscoverableTimeout = 0" /etc/bluetooth/main.conf; then
+    sudo sed -i 's/^DiscoverableTimeout = .*/DiscoverableTimeout = 0/' /etc/bluetooth/main.conf
+fi
 
 # ---- 11. Hostname ----
 if [ "$(hostname)" != "$TARGET_HOSTNAME" ]; then
