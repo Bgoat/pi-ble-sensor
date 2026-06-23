@@ -16,4 +16,13 @@ if command -v rfkill >/dev/null 2>&1; then
     rfkill unblock bluetooth 2>/dev/null || true
 fi
 
+# BlueZ on Trixie no longer sets the controller discoverable when an LE
+# advertisement registers, so Chrome's BLE picker won't see us by default.
+# Force discoverable on. (DiscoverableTimeout=0 in /etc/bluetooth/main.conf
+# keeps it sticky.)
+if command -v bluetoothctl >/dev/null 2>&1; then
+    bluetoothctl power on >/dev/null 2>&1 || true
+    bluetoothctl discoverable on >/dev/null 2>&1 || true
+fi
+
 exit 0

@@ -1,18 +1,38 @@
-# wingSpan unit for wjm — hardware addendum
+# wingSpan units for wjm — hardware addendum
 
 Read this first to know what's in the package and how everything physically connects. For software setup (Tailscale, SSH/SCP, the BLE web app) see [README.md](README.md).
 
-**Your unit is `wingSpan-1`** — that's the device name it advertises over Bluetooth, and the hostname-shorthand William will use when referencing it.
+## Your units
+
+You have received multiple wingSpan units — one per hive. Each unit is self-contained (its own Pi, sensors, battery, solar panel) and runs independently. They differ only by their identifiers:
+
+| Unit | BLE name (Chrome picker) | Tailscale hostname (SSH / SCP) | Hive (you fill in) |
+|---|---|---|---|
+| 1 | `wingSpan-1` | `raspberrypi` | _________ |
+| 2 | `wingSpan-2` | `wingspan-2` | _________ |
+
+Write the hive name (or a sticky note) on each unit before you install it so you don't lose track.
+
+To pull data from a specific unit:
+
+```
+scp -r beehaus@raspberrypi:/var/lib/wingspan/audio/ ./hive-A/audio/
+scp -r beehaus@wingspan-2:/var/lib/wingspan/audio/ ./hive-B/audio/
+```
+
+When using the BLE web app (`index.html` in Chrome) you'll see all reachable units in the device picker — pick by name (`wingSpan-1`, `wingSpan-2`, ...).
 
 ---
 
-## What's in the package
+## What's in the package (per unit)
+
+Each unit ships with the same parts. If you received N units, multiply quantities by N.
 
 ### Compute & sensors (assembled inside the enclosure)
 
 - **Raspberry Pi Zero 2 W** — the brain. Runs the sensor service that records audio and logs CSV data.
 - **SHT40 temperature & humidity sensor** — Adafruit #4885 on the STEMMA QT I²C chain. Reads ambient temp/humidity once per minute.
-- **SPH0645 I²S MEMS microphone** — Adafruit #3421. Captures 5 seconds of audio every 2 minutes for offline frequency analysis.
+- **SPH0645 I²S MEMS microphone** — captures 5 seconds of audio every 2 minutes for offline frequency analysis.
 
 ### Power & battery
 
@@ -51,7 +71,9 @@ Everything except the solar panel itself lives inside the enclosure. The W036 ca
 
 ---
 
-## Installation
+## Installation (repeat per unit)
+
+Do these steps once per unit you received. Each unit pairs with one hive and one solar panel.
 
 1. **Mount the solar panel.**
    - Bolt the P120 panel onto the BK103 bracket using the K-MT-BK-ETFE screws and washers.
@@ -65,11 +87,12 @@ Everything except the solar panel itself lives inside the enclosure. The W036 ca
 3. **Place the unit near or on the hive.**
    - The mic and SHT40 sensor are inside the enclosure but exposed to ambient air through a vent. Place the unit close enough to the hive that internal bee sounds are audible (within a few feet, or directly on the lid).
    - Keep the unit upright so the vent isn't pointed straight at the ground.
+   - **Label the unit with the hive name** and fill in the row in the "Your units" table above so you remember which Pi is at which hive.
 
 4. **First boot.**
    - As long as the battery has charge OR the solar panel is plugged in and getting sun, the Pi will boot automatically (~30 seconds).
    - It will join your `wjm` WiFi and bring up Tailscale on its own.
-   - Verify by `ssh beehaus@raspberrypi` from your laptop per the main README.
+   - Verify by SSH-ing using the unit's Tailscale hostname (see the table above), e.g. `ssh beehaus@wingspan-2`. See [README.md](README.md) for the full SSH workflow.
 
 ---
 
@@ -92,10 +115,10 @@ You don't need to do anything to maintain the system. Just pull data over Tailsc
 
 ---
 
-## What's already configured on the Pi
+## What's already configured on each Pi
 
 - `wjm` WiFi credentials pre-loaded — joins automatically on boot.
-- Tailscale installed and authorized. William will share the device with your Tailscale account.
+- Tailscale installed and authorized. William will share each device with your Tailscale account before shipping.
 - `wingspan.service` (systemd) auto-starts the sensor on boot and restarts it if it crashes.
 - Data lives in `/var/lib/wingspan/`:
   - `audio/YYYY-MM-DD/HH-MM-SSZ.wav` — 5-second clips every 2 minutes
