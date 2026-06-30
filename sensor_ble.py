@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """wingSpan: BLE peripheral exposing SHT40 temp/humidity, USB-mic bee
-acoustic analysis, and a placeholder hive weight.
+acoustic analysis, and aggregated hive weight from four BEE-HAUS load
+cells (BLE central, see loadcell_central.py).
 
 Run on a Raspberry Pi with:
     sudo apt install python3-dbus python3-gi python3-numpy \
                      python3-sounddevice libportaudio2
-    pip install bluezero adafruit-circuitpython-sht4x adafruit-blinka \
+    pip install bluezero bleak adafruit-circuitpython-sht4x adafruit-blinka \
                 --break-system-packages
 
 Confirm the USB mic shows up with `arecord -l` and adjust AUDIO_DEVICE
@@ -27,6 +28,7 @@ import sounddevice as sd
 from bluezero import adapter, async_tools, peripheral
 
 import csv_writer
+import loadcell_central
 
 SERVICE_UUID = "e80b5ce0-1111-4000-8000-000000000001"
 DATA_UUID    = "e80b5ce0-1111-4000-8000-000000000002"
@@ -73,9 +75,6 @@ EVENT_THRESHOLD_DB = {
     "swarm":   8.0,
 }
 
-# Static placeholder until a real load cell is wired up.
-DEFAULT_WEIGHT_KG = 12.345
-
 i2c = busio.I2C(board.SCL, board.SDA)
 sht = adafruit_sht4x.SHT4x(i2c)
 
@@ -85,9 +84,6 @@ audio_state = {
     "events": [],
 }
 audio_lock = threading.Lock()
-
-weight_kg   = DEFAULT_WEIGHT_KG
-weight_lock = threading.Lock()
 
 
 def analyze(samples_int16: np.ndarray):
@@ -211,13 +207,12 @@ def csv_logger_worker():
                 db     = audio_state["db"]
                 bands  = dict(audio_state["bands"])
                 events = list(audio_state["events"])
-            with weight_lock:
-                w = weight_kg
+            weight = loadcell_central.get_state()
             row = [
                 int(time.time()),
                 round(temp_c, 2),
                 round(rh, 2),
-                round(w, 3),
+                weight["total_kg"],
                 db,
                 "", "", "",   # bv, bp, chg — pending MAX17048 wire-up
                 bands["hum"],
@@ -243,15 +238,17 @@ def read_payload():
         db     = audio_state["db"]
         bands  = dict(audio_state["bands"])
         events = list(audio_state["events"])
-    with weight_lock:
-        w = weight_kg
+    weight = loadcell_central.get_state()
     payload = {
         "t":      round(temp_c, 2),
         "h":      round(rh, 2),
         "db":     db,
         "bands":  bands,
         "events": events,
-        "w":      round(w, 3),
+        "w":      weight["total_kg"],
+        "w_legs": {leg: v["kg"]       for leg, v in weight["legs"].items()},
+        "bat":    {leg: v["batt_pct"] for leg, v in weight["legs"].items()},
+        "conn":   {leg: v["connected"] for leg, v in weight["legs"].items()},
         "ts":     int(time.time()),
     }
     return list(json.dumps(payload).encode("utf-8"))
@@ -272,16 +269,15 @@ def on_notify(notifying, characteristic):
 
 
 def on_cmd_write(value, options):
-    global weight_kg
     if value and value[0] == CMD_ZERO_WEIGHT:
-        with weight_lock:
-            weight_kg = 0.0
-        print("[cmd] zero weight")
+        loadcell_central.send_tare_all()
+        print("[cmd] tare load cells")
 
 
 def main():
     start_audio()
     start_csv_logger()
+    loadcell_central.start()
 
     adapter_addr = list(adapter.Adapter.available())[0].address
     dev = peripheral.Peripheral(adapter_addr, local_name="wingSpan-1")
