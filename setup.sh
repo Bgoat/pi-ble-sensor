@@ -48,7 +48,7 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
 # sounddevice was dropped from Debian Trixie's apt repos — install via pip.
 echo "[2/12] Python packages"
 pip3 install --break-system-packages --quiet \
-    sounddevice bluezero adafruit-circuitpython-sht4x adafruit-blinka
+    sounddevice bluezero bleak adafruit-circuitpython-sht4x adafruit-blinka
 
 # ---- 3. Enable I2C + I2S in /boot/firmware/config.txt ----
 echo "[3/12] Firmware config (I2C, I2S, googlevoicehat overlay)"
@@ -79,7 +79,7 @@ fi
 
 # ---- 5. Stage Python + boot script in $HOME ----
 echo "[5/12] Staging firmware files in ${PI_HOME}"
-cp sensor_ble.py csv_writer.py wingspan-boot.sh "$PI_HOME/"
+cp sensor_ble.py csv_writer.py loadcell_central.py wingspan-boot.sh "$PI_HOME/"
 chmod +x "$PI_HOME/wingspan-boot.sh"
 
 # Personalize the BLE LocalName
