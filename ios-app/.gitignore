@@ -1,0 +1,11 @@
+# Regenerated from project.yml by XcodeGen — do not commit.
+*.xcodeproj/
+*.xcworkspace/
+
+# Xcode user-specific
+xcuserdata/
+DerivedData/
+*.xcuserstate
+
+# Build output
+build/

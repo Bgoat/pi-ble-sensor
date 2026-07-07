@@ -1,0 +1,40 @@
+# XcodeGen spec — run `xcodegen` in this directory to regenerate wingSpan.xcodeproj.
+#
+#   brew install xcodegen
+#   cd ios-app && xcodegen
+#   open wingSpan.xcodeproj
+#
+# The generated .xcodeproj is intentionally NOT checked in; the source of
+# truth is this file plus the Swift files under wingSpan/.
+
+name: wingSpan
+options:
+  bundleIdPrefix: com.wingspan
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.9"
+    DEVELOPMENT_TEAM: ""           # fill in your Apple Developer team ID
+    CODE_SIGN_STYLE: Automatic
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+
+targets:
+  wingSpan:
+    type: application
+    platform: iOS
+    sources:
+      - wingSpan
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.wingspan.app
+        INFOPLIST_KEY_CFBundleDisplayName: wingSpan
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription: >-
+          wingSpan uses Bluetooth to read live sensor data from a nearby hive monitor.
